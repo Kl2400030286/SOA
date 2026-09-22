@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: parkgrid-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: parkgrid-api
+          uri: lb://PARKGRID-SERVICE
+          predicates:
+            - Path=/api/**,/actuator/health
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    register-with-eureka: true
+    fetch-registry: true
+server:
+  port: 8081
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
