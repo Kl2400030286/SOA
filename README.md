@@ -1,27 +1,41 @@
-# ParkGrid Solutions
+# ParkGrid Services
 
-Runnable Spring Boot implementation of the ParkGrid parking, booking, billing, JWT authentication and admin metrics APIs. The domain remains in one deployable service for now, with Eureka and an API Gateway added as runnable infrastructure around it.
+ParkGrid is a Maven multi-module Spring Boot 4.0.0 application. The business behavior and
+database schema remain compatible with the original consolidated API, while deployable
+service boundaries are now explicit:
 
-## MySQL 8 setup
+| Module | Application | Port | Responsibility |
+|---|---|---:|---|
+| `eureka` | `eureka-server` | 8761 | Service registry |
+| `gateway` | `api-gateway` | 8081 | Edge routing and load balancing |
+| `services/parking-service` | `parking-service` | 8080 | MySQL-backed auth, zones, slots, and compatibility API |
+| `services/booking-service` | `booking-service` | 8082 | Booking facade; forwards authenticated requests to parking |
+| `services/billing-service` | `billing-service` | 8083 | Billing facade; obtains quotes from parking |
 
-Copy `.env.example` to `.env`, set `MYSQL_PASSWORD` to your MySQL root password, and replace `JWT_SECRET` with a private 32+ character value. Credentials are used only through the local `.env` file and are not embedded in Java or Docker configuration. Start the database, Eureka server, gateway and API with `docker compose up --build`. Without Docker, create database `parkingslot` in MySQL 8 and start the main service with `MYSQL_PASSWORD` set in the environment.
+Booking calls Billing for `/api/bookings/{id}/quote`, and Billing calls the parking service's
+internal quote endpoint. The parking service remains the source of truth for transactions,
+JWT role enforcement, overlap locking, tariffs, cancellation, and MySQL persistence. This
+keeps existing clients working while allowing each service to be deployed independently.
 
-## Service URLs
+## Build and run
 
-- Eureka dashboard: `http://localhost:8761`
-- API Gateway: `http://localhost:8081`
-- Consolidated API direct port: `http://localhost:8080`
+The root `pom.xml` is an aggregator and pins Spring Boot `4.0.0` and Spring Cloud
+`2025.1.0`. Run the complete build with:
 
-When Docker Compose is running, use `http://localhost:8081/api/...` for client requests. The gateway discovers `PARKGRID-SERVICE` through Eureka and load-balances requests to the registered application instance. The direct port is retained for local development and diagnostics.
+```text
+mvn clean verify
+```
 
-Hibernate creates and updates the tables on first startup. `database/init.sql` creates the database; it does not contain application passwords or seed data.
+Create `parkingslot` in MySQL 8, copy `.env.example` to `.env`, and set `MYSQL_PASSWORD`
+and a 32+ character `JWT_SECRET`. Then run:
 
-## API flow
+```text
+docker compose up --build
+```
 
-1. `POST /api/auth/register` or `/api/auth/login` with `{"email":"driver@example.com","password":"password123"}`.
-2. Send `Authorization: Bearer <token>` to `POST /api/parking/zones` as an admin, for example `{"name":"Central Mall","address":"1 Main Street","capacity":50}`.
-3. Read `GET /api/parking/zones/{zoneId}/availability` and `GET /api/parking/zones/{zoneId}/slots`.
-4. Reserve with `POST /api/bookings` and `{"slotId":1,"startTime":"2030-01-01T09:00:00Z","endTime":"2030-01-01T11:30:00Z"}`. The pessimistic slot lock and overlap query prevent concurrent double booking.
-5. Calculate the charge with `GET /api/billing/bookings/{bookingId}/quote`; admins can view `GET /api/admin/metrics`.
+Use `http://localhost:8081/api/...` through the gateway. Eureka registration is enabled
+by default and can be disabled per service with `EUREKA_ENABLED`, `EUREKA_REGISTER`, or
+`EUREKA_FETCH`. Direct service URLs are useful for diagnostics.
 
-All monetary values are integer cents. Each zone has a configurable tariff from 5 to 100 cents per started hour. Cancellation is owner-only, idempotency-safe through booking status checks, and releases the slot only when no other confirmed booking remains.
+Existing endpoints remain under `/api/auth`, `/api/parking`, `/api/bookings`,
+`/api/billing`, and `/api/admin`. Zone rates are integer cents from 5 through 100.
